@@ -1,0 +1,309 @@
+name: Build Music Player APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create Project Files
+        run: |
+          mkdir -p app/src/main/java/com/app/player
+          mkdir -p app/src/main/res/values
+
+          # 1. settings.gradle
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MyPlayer"
+          include ':app'
+          EOF
+
+          # 2. build.gradle (root)
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOF
+
+          # 3. app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.app.player'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.app.player"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildFeatures {
+                  compose true
+              }
+
+              composeOptions {
+                  kotlinCompilerExtensionVersion '1.5.8'
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+          }
+
+          dependencies {
+              implementation platform('androidx.compose:compose-bom:2024.02.00')
+              implementation 'androidx.activity:activity-compose:1.8.2'
+              implementation 'androidx.compose.ui:ui'
+              implementation 'androidx.compose.material3:material3'
+              implementation 'androidx.media3:media3-exoplayer:1.2.1'
+          }
+          EOF
+
+          # 4. AndroidManifest.xml
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="MyPlayer"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # 5. MainActivity.kt (с возможностью скачивания и добавления своих треков)
+          cat << 'EOF' > app/src/main/java/com/app/player/MainActivity.kt
+          package com.app.player
+
+          import android.content.Context
+          import android.net.Uri
+          import android.os.Bundle
+          import android.os.Environment
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.unit.dp
+          import androidx.media3.common.MediaItem
+          import androidx.media3.exoplayer.ExoPlayer
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import java.io.File
+          import java.net.URL
+
+          data class Track(val name: String, val uri: Uri)
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      MaterialTheme {
+                          Surface(modifier = Modifier.fillMaxSize()) {
+                              PlayerScreen()
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun PlayerScreen() {
+              val context = LocalContext.current
+              val scope = rememberCoroutineScope()
+              val player = remember { ExoPlayer.Builder(context).build() }
+              DisposableEffect(Unit) { onDispose { player.release() } }
+
+              var tracks by remember { mutableStateOf(getSavedTracks(context)) }
+              var currentPlaying by remember { mutableStateOf<String?>(null) }
+              var urlText by remember { mutableStateOf("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3") }
+              var fileNameText by remember { mutableStateOf("Track1") }
+              var isDownloading by remember { mutableStateOf(false) }
+
+              // Выбор локальных файлов с телефона
+              val filePicker = rememberLauncherForActivityResult(
+                  contract = ActivityResultContracts.OpenDocument()
+              ) { uri ->
+                  uri?.let {
+                      val name = it.lastPathSegment?.substringAfterLast('/') ?: "Custom Track"
+                      tracks = tracks + Track(name, it)
+                      Toast.makeText(context, "Трек добавлен!", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                  Text("🎵 Мой Плеер", style = MaterialTheme.typography.headlineMedium)
+                  Spacer(modifier = Modifier.height(12.dp))
+
+                  // Кнопка добавить свой трек
+                  Button(
+                      onClick = { filePicker.launch(arrayOf("audio/*")) },
+                      modifier = Modifier.fillMaxWidth()
+                  ) {
+                      Text("📁 Добавить трек с телефона")
+                  }
+
+                  Spacer(modifier = Modifier.height(16.dp))
+                  Text("Скачать из интернета:", style = MaterialTheme.typography.titleMedium)
+
+                  OutlinedTextField(
+                      value = urlText,
+                      onValueChange = { urlText = it },
+                      label = { Text("Ссылка на MP3") },
+                      modifier = Modifier.fillMaxWidth()
+                  )
+                  Spacer(modifier = Modifier.height(6.dp))
+                  OutlinedTextField(
+                      value = fileNameText,
+                      onValueChange = { fileNameText = it },
+                      label = { Text("Имя файла") },
+                      modifier = Modifier.fillMaxWidth()
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+
+                  Button(
+                      onClick = {
+                          if (urlText.isNotBlank()) {
+                              isDownloading = true
+                              scope.launch {
+                                  downloadMp3(context, urlText, "$fileNameText.mp3")
+                                  tracks = getSavedTracks(context)
+                                  isDownloading = false
+                                  Toast.makeText(context, "Скачано!", Toast.LENGTH_SHORT).show()
+                              }
+                          }
+                      },
+                      enabled = !isDownloading,
+                      modifier = Modifier.fillMaxWidth()
+                  ) {
+                      Text(if (isDownloading) "Загрузка..." else "Скачать в плеер")
+                  }
+
+                  Spacer(modifier = Modifier.height(20.dp))
+                  Text("Плейлист (${tracks.size}):", style = MaterialTheme.typography.titleMedium)
+
+                  LazyColumn(modifier = Modifier.weight(1f)) {
+                      items(tracks) { track ->
+                          Card(
+                              modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                              colors = CardDefaults.cardColors(
+                                  containerColor = if (currentPlaying == track.name) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                              )
+                          ) {
+                              Row(
+                                  modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                  horizontalArrangement = Arrangement.SpaceBetween,
+                                  verticalAlignment = Alignment.CenterVertically
+                              ) {
+                                  Text(track.name, modifier = Modifier.weight(1f))
+                                  Button(onClick = {
+                                      if (currentPlaying == track.name && player.isPlaying) {
+                                          player.pause()
+                                          currentPlaying = null
+                                      } else {
+                                          player.setMediaItem(MediaItem.fromUri(track.uri))
+                                          player.prepare()
+                                          player.play()
+                                          currentPlaying = track.name
+                                      }
+                                  }) {
+                                      Text(if (currentPlaying == track.name && player.isPlaying) "Пауза" else "Старт")
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          suspend fun downloadMp3(context: Context, urlString: String, fileName: String) {
+              withContext(Dispatchers.IO) {
+                  try {
+                      val url = URL(urlString)
+                      val connection = url.openConnection()
+                      connection.connect()
+                      val input = connection.getInputStream()
+                      val dir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+                      val file = File(dir, fileName)
+                      file.outputStream().use { input.copyTo(it) }
+                  } catch (e: Exception) { e.printStackTrace() }
+              }
+          }
+
+          fun getSavedTracks(context: Context): List<Track> {
+              val dir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+              return dir?.listFiles { it -> it.extension == "mp3" }?.map { 
+                  Track(it.name, Uri.fromFile(it)) 
+              } ?: emptyList()
+          }
+          EOF
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build APK
+        run: |
+          gradle wrapper --gradle-version 8.4
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyPlayer-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
