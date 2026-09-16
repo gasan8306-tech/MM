@@ -23,6 +23,17 @@ jobs:
           mkdir -p app/src/main/java/com/app/player
           mkdir -p app/src/main/res/values
 
+          # Принудительно везде пишем свойства
+          cat << 'EOF' > gradle.properties
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
+          mkdir -p ~/.gradle
+          cp gradle.properties ~/.gradle/gradle.properties
+          cp gradle.properties app/gradle.properties
+
           # settings.gradle
           cat << 'EOF' > settings.gradle
           pluginManagement {
@@ -295,7 +306,7 @@ jobs:
           EOF
 
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug -Pandroid.useAndroidX=true -Pandroid.nonTransitiveRClass=true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
