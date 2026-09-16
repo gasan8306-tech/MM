@@ -13,15 +13,17 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
 
       - name: Create Project Files
         run: |
           mkdir -p app/src/main/java/com/app/player
           mkdir -p app/src/main/res/values
 
-          # 1. settings.gradle
+          # settings.gradle
           cat << 'EOF' > settings.gradle
           pluginManagement {
               repositories {
@@ -41,7 +43,7 @@ jobs:
           include ':app'
           EOF
 
-          # 2. build.gradle (root)
+          # build.gradle (root)
           cat << 'EOF' > build.gradle
           plugins {
               id 'com.android.application' version '8.2.2' apply false
@@ -49,7 +51,7 @@ jobs:
           }
           EOF
 
-          # 3. app/build.gradle
+          # app/build.gradle
           cat << 'EOF' > app/build.gradle
           plugins {
               id 'com.android.application'
@@ -94,7 +96,7 @@ jobs:
           }
           EOF
 
-          # 4. AndroidManifest.xml
+          # AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -118,7 +120,7 @@ jobs:
           </manifest>
           EOF
 
-          # 5. MainActivity.kt (с возможностью скачивания и добавления своих треков)
+          # MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/app/player/MainActivity.kt
           package com.app.player
 
@@ -176,7 +178,6 @@ jobs:
               var fileNameText by remember { mutableStateOf("Track1") }
               var isDownloading by remember { mutableStateOf(false) }
 
-              // Выбор локальных файлов с телефона
               val filePicker = rememberLauncherForActivityResult(
                   contract = ActivityResultContracts.OpenDocument()
               ) { uri ->
@@ -191,7 +192,6 @@ jobs:
                   Text("🎵 Мой Плеер", style = MaterialTheme.typography.headlineMedium)
                   Spacer(modifier = Modifier.height(12.dp))
 
-                  // Кнопка добавить свой трек
                   Button(
                       onClick = { filePicker.launch(arrayOf("audio/*")) },
                       modifier = Modifier.fillMaxWidth()
@@ -294,13 +294,8 @@ jobs:
           }
           EOF
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-
       - name: Build APK
-        run: |
-          gradle wrapper --gradle-version 8.4
-          ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
